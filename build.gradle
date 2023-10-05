@@ -1,0 +1,35 @@
+plugins {
+    id("com.github.johnrengelman.shadow") version "6.0.0"
+    id 'com.adarshr.test-logger' version '3.2.0'
+}
+
+apply plugin: 'java'
+
+java {
+    sourceCompatibility = 1.11
+    targetCompatibility = 1.11
+}
+
+repositories {
+    mavenCentral()
+}
+
+test {
+    useJUnitPlatform()
+}
+
+dependencies {
+    implementation 'org.apache.kafka:connect-api:3.5.1'
+    implementation 'org.apache.kafka:connect-transforms:3.5.1'
+    implementation 'org.apache.commons:commons-lang3:3.13.0'
+
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.0'
+    testImplementation 'org.postgresql:postgresql:42.2.12'
+    testImplementation 'org.testcontainers:postgresql:1.19.0'
+    testImplementation 'io.rest-assured:rest-assured:5.3.1'
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.0.2'
+    testImplementation 'org.awaitility:awaitility:4.2.0'
+    testImplementation 'org.slf4j:slf4j-simple:1.7.32'
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+}
