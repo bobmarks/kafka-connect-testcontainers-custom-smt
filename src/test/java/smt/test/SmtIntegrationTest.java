@@ -313,35 +313,37 @@ public class SmtIntegrationTest {
 
     private void setupConnector(String randomFieldName, int size, boolean useLetters, boolean useNumbers)
         throws IOException {
-        Map<String, Object> map = new HashMap<>(
-            ImmutableMap.of("name", "test-connector", "config", ImmutableMap.builder()
-                .put("connector.class", "io.confluent.connect.jdbc.JdbcSourceConnector")
-                .put("tasks.max", "1")
-                .put("connection.url",
-                    format("jdbc:postgresql://%s:5432/%s?loggerLevel=OFF", POSTGRES_NETWORK_ALIAS, DB_NAME))
-                .put("connection.user", DB_USERNAME)
-                .put("connection.password", DB_PASSWORD)
-                .put("table.whitelist", DB_TABLE_PERSON)
-                .put("mode", "timestamp+incrementing")
-                .put("validate.non.null", "false")
-                .put("topic.prefix", "test.")
-                .put("timestamp.column.name", "updated")
-                .put("incrementing.column.name", "id")
-                .build()));
-        // Configure SMT if randomFieldSize is greater than zero
+        Map<String, Object> configMap = new HashMap<>();
+        configMap.put("connector.class", "io.confluent.connect.jdbc.JdbcSourceConnector");
+        configMap.put("tasks.max", "1");
+        configMap.put("connection.url",
+            format("jdbc:postgresql://%s:5432/%s?loggerLevel=OFF", POSTGRES_NETWORK_ALIAS, DB_NAME));
+        configMap.put("connection.user", DB_USERNAME);
+        configMap.put("connection.password", DB_PASSWORD);
+        configMap.put("table.whitelist", DB_TABLE_PERSON);
+        configMap.put("mode", "timestamp+incrementing");
+        configMap.put("validate.non.null", "false");
+        configMap.put("topic.prefix", "test.");
+        configMap.put("timestamp.column.name", "updated");
+        configMap.put("incrementing.column.name", "id");
+
+        // Configure SMT if randomFieldName is st
         if (randomFieldName != null) {
-            map.put("transforms", "randomfield");
-            map.put("transforms.randomfield.type", "smt.test.RandomField$Value");
-            map.put("transforms.randomfield.random.field.name", randomFieldName);
-            map.put("transforms.randomfield.random.field.size", String.valueOf(size));
-            map.put("transforms.randomfield.random.use.letters", String.valueOf(useLetters));
-            map.put("transforms.randomfield.random.use.numbers", String.valueOf(useNumbers));
+            configMap.put("transforms", "randomfield");
+            configMap.put("transforms.randomfield.type", "smt.test.RandomField$Value");
+            configMap.put("transforms.randomfield.random.field.name", randomFieldName);
+            configMap.put("transforms.randomfield.random.field.size", String.valueOf(size));
+            configMap.put("transforms.randomfield.random.use.letters", String.valueOf(useLetters));
+            configMap.put("transforms.randomfield.random.use.numbers", String.valueOf(useNumbers));
         }
+
+        String payload = MAPPER.writeValueAsString(ImmutableMap.of(
+            "name", "test-connector", "config", configMap));
         given()
             .log().headers()
             .contentType(ContentType.JSON)
             .accept(ContentType.JSON)
-            .body(MAPPER.writeValueAsString(map))
+            .body(payload)
             .when()
             .post(getKafkaConnectUrl() + "/connectors")
             .andReturn()
