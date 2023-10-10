@@ -1,6 +1,6 @@
 # Kafka Connect integration test using TestContainers and a Custom SMT
 
-Using TestContainers to integration test a Kafka Connect with a custon SMT.
+Using TestContainers to integration test a Kafka Connect with a custom SMT.
 
 See [original StackOverflow question](https://stackoverflow.com/questions/77128033/testing-custom-kafka-connect-smt-using-test-containers)
 .
@@ -24,13 +24,8 @@ This should produce something like the following:
 
 smt.test.SmtIntegrationTest
 
-  Test db_insert_creates_kakfa_message_with_smt() FAILED
-
-  java.lang.AssertionError: 1 expectation failed.
-  Expected status code <201> but was <500>.
-      at smt.test.SmtIntegrationTest.setupConnector(SmtIntegrationTest.java:350)
-
-  Test db_insert_creates_kakfa_message() PASSED (2.7s)
+  Test db_insert_creates_kakfa_message_with_smt() PASSED (2s)
+  Test db_insert_creates_kakfa_message() PASSED (6s)
 
 smt.test.RandomFieldTest
 
@@ -38,5 +33,6 @@ smt.test.RandomFieldTest
   Test schemalessInsertRandomField() PASSED
   Test copySchemaAndInsertUuidField() PASSED
 
-FAILURE: Executed 5 tests in 1m 34s (1 failed)
+SUCCESS: Executed 5 tests in 1m 20s
 ```
+
