@@ -10,12 +10,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import io.restassured.http.ContentType;
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -29,10 +25,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.jar.Attributes;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
-import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.http.HttpStatus;
@@ -54,40 +46,57 @@ import org.testcontainers.lifecycle.Startables;
 import org.testcontainers.shaded.com.google.common.collect.ImmutableMap;
 import org.testcontainers.utility.DockerImageName;
 
+/**
+ * Integration test which spins up (1) Kafka, (2) ZooKeeper, (3) SchemaRegistry, (4) Postgres and (5) Kafka Connect
+ * Docker containers (using TestContainers).
+ *
+ * This creates a JAR file of this project's code and binds the JAR file to a volume of the Kafka Connect app. A
+ * JdbcSourceConnector connector is created in the same app which will monitor changes to database tables in the
+ * PostgreSQL container.
+ *
+ * The test consists then of inserting a row into the database table, then waiting until a Kafka topic is created based
+ * on the database table name. Records are consumed against this topic and checked they match the row that was inserted,
+ * along with a generated field from our SMT (Simple Message Transformer) class which was bundled in the JAR file.
+ *
+ * Finally, we ensure that our
+ */
 public class SmtIntegrationTest {
 
     // Versions
 
-    public static final String CONFLUENT_VERSION = "7.5.0";
+    private static final String CONFLUENT_VERSION = "7.5.0";
 
     // Ports
 
-    public static final int KAFKA_INTERNAL_PORT = 9092;
-    public static final int ZOOKEEPER_INTERNAL_PORT = 2181;
+    private static final int KAFKA_INTERNAL_PORT = 9092;
+    private static final int ZOOKEEPER_INTERNAL_PORT = 2181;
     private static final int KAFKA_INTERNAL_ADVERTISED_LISTENERS_PORT = 29092;
-    public static final int SCHEMA_REGISTRY_INTERNAL_PORT = 8081;
-    public static final int CONNECT_REST_PORT_INTERNAL = 8083;
+    private static final int SCHEMA_REGISTRY_INTERNAL_PORT = 8081;
+    private static final int CONNECT_REST_PORT_INTERNAL = 8083;
 
     // Network Aliases
 
-    public static final String KAFKA_NETWORK_ALIAS = "kafka";
-    public static final String ZOOKEEPER_NETWORK_ALIAS = "zookeeper";
-    public static final String SCHEMA_REGISTRY_NETWORK_ALIAS = "schema-registry";
-    public static final String KAFKA_CONNECT_NETWORK_ALIAS = "kafka-connect";
-    public static final String POSTGRES_NETWORK_ALIAS = "postgres";
+    private static final String KAFKA_NETWORK_ALIAS = "kafka";
+    private static final String ZOOKEEPER_NETWORK_ALIAS = "zookeeper";
+    private static final String SCHEMA_REGISTRY_NETWORK_ALIAS = "schema-registry";
+    private static final String KAFKA_CONNECT_NETWORK_ALIAS = "kafka-connect";
+    private static final String POSTGRES_NETWORK_ALIAS = "postgres";
 
     // Database
 
-    public static final String DB_NAME = "test";
-    public static final String DB_USERNAME = "postgres";
-    public static final String DB_PASSWORD = "password";
-    public static final String DB_TABLE_PERSON = "person";
+    private static final String DB_NAME = "test";
+    private static final String DB_USERNAME = "postgres";
+    private static final String DB_PASSWORD = "password";
+    private static final String DB_TABLE_PERSON = "person";
+    private static final String DB_TABLE_EMPLOYEE = "employee";
 
     // Other constants
 
     private static final String PLUGIN_PATH_CONTAINER = "/usr/share/java";
     private static final String PLUGIN_JAR_FILE = "kafka-smt.jar";
     private static final ObjectMapper MAPPER = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+    private static final String CONNECTOR_NAME = "test-connector";
+    private static final Object TOPIC_PREFIX = "test";
 
     // Docker network / containers
 
@@ -99,8 +108,29 @@ public class SmtIntegrationTest {
     private static PostgreSQLContainer postgreSql;
     private static int kafkaExposedPort;
 
+    private static AdminClient adminClient;
+
+    // Static methods
+
+    private static String getKafkaConnectUrl() {
+        return format("http://%s:%s", kafkaConnect.getContainerIpAddress(),
+            kafkaConnect.getMappedPort(CONNECT_REST_PORT_INTERNAL));
+    }
+
+    private static String getInternalKafkaBoostrapServers() {
+        return KAFKA_NETWORK_ALIAS + ":" + KAFKA_INTERNAL_ADVERTISED_LISTENERS_PORT;
+    }
+
+    private static String getKafkaBoostrapServers() {
+        return kafka.getHost() + ":" + kafkaExposedPort;
+    }
+
+    private static String getSchemaRegistryUrl() {
+        return "http://schema-registry:" + SCHEMA_REGISTRY_INTERNAL_PORT;
+    }
+
     @BeforeAll
-    public static void setup() throws IOException {
+    public static void setup() {
         network = Network.newNetwork();
 
         zookeeper = new GenericContainer("confluentinc/cp-zookeeper:" + CONFLUENT_VERSION)
@@ -112,7 +142,7 @@ public class SmtIntegrationTest {
             .withStartupTimeout(Duration.of(3, MINUTES));
         String zookeeperInternalUrl = ZOOKEEPER_NETWORK_ALIAS + ":" + ZOOKEEPER_INTERNAL_PORT;
 
-        kafkaExposedPort = getRandomFreePort();
+        kafkaExposedPort = TestUtils.getRandomFreePort();
         kafka = new FixedHostPortGenericContainer("confluentinc/cp-kafka:" + CONFLUENT_VERSION)
             .withFixedExposedPort(kafkaExposedPort, KAFKA_INTERNAL_PORT)
             .withNetwork(network)
@@ -171,7 +201,15 @@ public class SmtIntegrationTest {
             .withCommand("bash", "-c", "confluent-hub install --no-prompt --component-dir /usr/share/java "
                 + "confluentinc/kafka-connect-jdbc:10.7.4 && /etc/confluent/docker/run && sleep infinity");
 
-        createConnectorPlugin();
+        // This doesn't work
+        // TestUtils.createConnectorPlugin(PLUGIN_JAR_FILE);
+        //kafkaConnect.withFileSystemBind("build/" + PLUGIN_JAR_FILE,
+        //    "/usr/share/java/kafka-smt-plugins/" + PLUGIN_JAR_FILE);
+
+        // This solution does a Gradle shadowJar build, and binds the output file to a container Path
+        File jarFile = TestUtils.createConnectorPluginWithGradle();
+        kafkaConnect.withFileSystemBind(jarFile.getAbsolutePath(),
+            "/usr/share/java/kafka-smt-plugins/" + PLUGIN_JAR_FILE);
 
         postgreSql = new PostgreSQLContainer<>(DockerImageName.parse("postgres:11")
             .asCompatibleSubstituteFor("postgres"))
@@ -198,121 +236,53 @@ public class SmtIntegrationTest {
             .statusCode(HttpStatus.SC_OK);
     }
 
+    // Test methods
+
     @Test
     public void db_insert_creates_kakfa_message() throws Exception {
-        setupConnector();
+        String topicName = TOPIC_PREFIX + "." + DB_TABLE_PERSON;
+        setupConnector(DB_TABLE_PERSON);
 
         databaseInsert(DB_TABLE_PERSON, "id, name", 1001, "David");
 
-        String topic = "test.person";
-        awaitForTopicCreation(topic);
-        List<ConsumerRecord> records = getRecordsFromKafkaTopic(topic, 1);
+        awaitForTopicCreation(topicName);
+        List<ConsumerRecord> records = getRecordsFromKafkaTopic(topicName, 1);
         assertThat(records).hasSize(1);
-        Map<String, Object> record1 = MAPPER.readValue((String) records.get(0).value(), Map.class);
-        System.out.println(MAPPER.writeValueAsString(record1));
-        assertThat((Map) record1.get("payload")).containsOnlyKeys("id", "name", "updated")
+        Map<String, Object> record = MAPPER.readValue((String) records.get(0).value(), Map.class);
+        System.out.println(MAPPER.writeValueAsString(record));
+        assertThat((Map) record.get("payload")).containsOnlyKeys("id", "name", "updated")
             .containsEntry("id", 1001)
             .containsEntry("name", "David");
     }
 
     @Test
     public void db_insert_creates_kakfa_message_with_smt() throws Exception {
-        setupConnector("my_random_field", 23, true, false);
+        String topicName = TOPIC_PREFIX + "." + DB_TABLE_EMPLOYEE;
+        setupConnector(DB_TABLE_EMPLOYEE, "my_random_field", 23, true, false);
 
-        databaseInsert(DB_TABLE_PERSON, "id, name", 1002, "John");
+        databaseInsert(DB_TABLE_EMPLOYEE, "id, name, manager", 1002, "John", "David");
 
-        String topic = "test.person";
-        awaitForTopicCreation(topic);
-        List<ConsumerRecord> records = getRecordsFromKafkaTopic(topic, 1);
+        awaitForTopicCreation(topicName);
+        List<ConsumerRecord> records = getRecordsFromKafkaTopic(topicName, 1);
         assertThat(records).hasSize(1);
-        Map<String, Object> record1 = MAPPER.readValue((String) records.get(0).value(), Map.class);
-        System.out.println(MAPPER.writeValueAsString(record1));
-
-        Map<String, Object> payload = (Map) record1.get("payload");
-        assertThat(payload).containsOnlyKeys("id", "name", "updated", "my_random_field")
+        Map<String, Object> record = MAPPER.readValue((String) records.get(0).value(), Map.class);
+        System.out.println(MAPPER.writeValueAsString(record));
+        Map<String, Object> payload = (Map) record.get("payload");
+        assertThat(payload).containsOnlyKeys("id", "name", "updated", "manager", "my_random_field")
             .containsEntry("id", 1002)
-            .containsEntry("name", "John");
+            .containsEntry("name", "John")
+            .containsEntry("manager", "David");
         assertThat((String) payload.get("my_random_field")).matches("[a-zA-Z]{23}");
-    }
-
-    // static methods
-
-    private static int getRandomFreePort() {
-        try (ServerSocket serverSocket = new ServerSocket(0)) {
-            return serverSocket.getLocalPort();
-        } catch (IOException e) {
-            e.printStackTrace();
-            return 0;
-        }
-    }
-
-    private static String getKafkaConnectUrl() {
-        return format("http://%s:%s", kafkaConnect.getContainerIpAddress(),
-            kafkaConnect.getMappedPort(CONNECT_REST_PORT_INTERNAL));
-    }
-
-    private static String getInternalKafkaBoostrapServers() {
-        return KAFKA_NETWORK_ALIAS + ":" + KAFKA_INTERNAL_ADVERTISED_LISTENERS_PORT;
-    }
-
-    private static String getKafkaBoostrapServers() {
-        return kafka.getHost() + ":" + kafkaExposedPort;
-    }
-
-    private static String getSchemaRegistryUrl() {
-        return "http://schema-registry:" + SCHEMA_REGISTRY_INTERNAL_PORT;
-    }
-
-    private static void createConnectorPlugin() throws IOException {
-        Manifest manifest = new Manifest();
-        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
-        JarOutputStream target = new JarOutputStream(new FileOutputStream("build/" + PLUGIN_JAR_FILE), manifest);
-        addFileToJar(new File("build/classes/java/main/"), target);
-        target.close();
-        kafkaConnect.withFileSystemBind("build/" + PLUGIN_JAR_FILE,
-            "/usr/share/java/kafka-smt-plugins/" + PLUGIN_JAR_FILE);
-    }
-
-    private static void addFileToJar(File source, JarOutputStream target) throws IOException {
-        String name = source.getPath().replace("\\", "/")
-            .replace("build/classes/java/main", "");
-        if (source.isDirectory()) {
-            if (!name.endsWith("/")) {
-                name += "/";
-            }
-            JarEntry entry = new JarEntry(name);
-            entry.setTime(source.lastModified());
-            target.putNextEntry(entry);
-            target.closeEntry();
-            for (File nestedFile : source.listFiles()) {
-                addFileToJar(nestedFile, target);
-            }
-        } else {
-            JarEntry entry = new JarEntry(name);
-            entry.setTime(source.lastModified());
-            target.putNextEntry(entry);
-            try (BufferedInputStream in = new BufferedInputStream(new FileInputStream(source))) {
-                byte[] buffer = new byte[1024];
-                while (true) {
-                    int count = in.read(buffer);
-                    if (count == -1) {
-                        break;
-                    }
-                    target.write(buffer, 0, count);
-                }
-                target.closeEntry();
-            }
-        }
     }
 
     // Private methods
 
-    private void setupConnector() throws IOException {
-        setupConnector(null, 0, false, false);
+    private void setupConnector(String databaseTable) throws IOException {
+        setupConnector(databaseTable, null, 0, false, false);
     }
 
-    private void setupConnector(String randomFieldName, int size, boolean useLetters, boolean useNumbers)
-        throws IOException {
+    private void setupConnector(String databaseTable, String randomFieldName, int size, boolean useLetters,
+        boolean useNumbers) throws IOException {
         Map<String, Object> configMap = new HashMap<>();
         configMap.put("connector.class", "io.confluent.connect.jdbc.JdbcSourceConnector");
         configMap.put("tasks.max", "1");
@@ -320,10 +290,10 @@ public class SmtIntegrationTest {
             format("jdbc:postgresql://%s:5432/%s?loggerLevel=OFF", POSTGRES_NETWORK_ALIAS, DB_NAME));
         configMap.put("connection.user", DB_USERNAME);
         configMap.put("connection.password", DB_PASSWORD);
-        configMap.put("table.whitelist", DB_TABLE_PERSON);
+        configMap.put("table.whitelist", databaseTable);
         configMap.put("mode", "timestamp+incrementing");
         configMap.put("validate.non.null", "false");
-        configMap.put("topic.prefix", "test.");
+        configMap.put("topic.prefix", TOPIC_PREFIX + ".");
         configMap.put("timestamp.column.name", "updated");
         configMap.put("incrementing.column.name", "id");
 
@@ -338,7 +308,7 @@ public class SmtIntegrationTest {
         }
 
         String payload = MAPPER.writeValueAsString(ImmutableMap.of(
-            "name", "test-connector", "config", configMap));
+            "name", CONNECTOR_NAME, "config", configMap));
         given()
             .log().headers()
             .contentType(ContentType.JSON)
@@ -356,6 +326,10 @@ public class SmtIntegrationTest {
         String sql = format("insert into %s (%s) values (%s)", table, columns, Arrays.stream(values)
             .map(col -> col instanceof String ? "'" + col + "'" : col.toString())
             .collect(Collectors.joining(", ")));
+        databaseExecute(sql);
+    }
+
+    private void databaseExecute(String sql) {
         try (Connection conn = DriverManager.getConnection(postgreSql.getJdbcUrl(), DB_USERNAME, DB_PASSWORD);
             Statement st = conn.createStatement()) {
             st.executeUpdate(sql);

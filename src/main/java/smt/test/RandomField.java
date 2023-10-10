@@ -1,5 +1,10 @@
 package smt.test;
 
+import static org.apache.kafka.connect.transforms.util.Requirements.requireMap;
+import static org.apache.kafka.connect.transforms.util.Requirements.requireStruct;
+
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
@@ -14,15 +19,14 @@ import org.apache.kafka.connect.transforms.Transformation;
 import org.apache.kafka.connect.transforms.util.SchemaUtil;
 import org.apache.kafka.connect.transforms.util.SimpleConfig;
 
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.apache.kafka.connect.transforms.util.Requirements.requireMap;
-import static org.apache.kafka.connect.transforms.util.Requirements.requireStruct;
-
+/**
+ * Custom SMT (Simple Message Transformer) which adds a random field.  The size of the field, the use of letters and the
+ * use of numbers can all be configured.
+ */
 public abstract class RandomField<R extends ConnectRecord<R>> implements Transformation<R> {
 
     private interface ConfigName {
+
         String RANDOM_FIELD_NAME = "random.field.name";
         String RANDOM_FIELD_SIZE = "random.field.size";
         String RANDOM_USE_LETTERS = "random.use.letters";
@@ -30,7 +34,8 @@ public abstract class RandomField<R extends ConnectRecord<R>> implements Transfo
     }
 
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
-        .define(ConfigName.RANDOM_FIELD_NAME, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE, ConfigDef.Importance.HIGH,
+        .define(ConfigName.RANDOM_FIELD_NAME, ConfigDef.Type.STRING, ConfigDef.NO_DEFAULT_VALUE,
+            ConfigDef.Importance.HIGH,
             "Field name for random String")
         .define(ConfigName.RANDOM_FIELD_SIZE, ConfigDef.Type.INT, 32, ConfigDef.Importance.LOW,
             "Field size for random String")
@@ -128,7 +133,8 @@ public abstract class RandomField<R extends ConnectRecord<R>> implements Transfo
 
         @Override
         protected R newRecord(R record, Schema updatedSchema, Object updatedValue) {
-            return record.newRecord(record.topic(), record.kafkaPartition(), updatedSchema, updatedValue, record.valueSchema(), record.value(), record.timestamp());
+            return record.newRecord(record.topic(), record.kafkaPartition(), updatedSchema, updatedValue,
+                record.valueSchema(), record.value(), record.timestamp());
         }
 
     }
@@ -147,7 +153,8 @@ public abstract class RandomField<R extends ConnectRecord<R>> implements Transfo
 
         @Override
         protected R newRecord(R record, Schema updatedSchema, Object updatedValue) {
-            return record.newRecord(record.topic(), record.kafkaPartition(), record.keySchema(), record.key(), updatedSchema, updatedValue, record.timestamp());
+            return record.newRecord(record.topic(), record.kafkaPartition(), record.keySchema(), record.key(),
+                updatedSchema, updatedValue, record.timestamp());
         }
 
     }

@@ -1,5 +1,11 @@
 package smt.test;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
@@ -8,13 +14,9 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.junit.After;
 import org.junit.jupiter.api.Test;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
+/**
+ * Unit test to test the RandomField SMT class.
+ */
 public class RandomFieldTest {
 
     private RandomField<SourceRecord> xform = new RandomField.Value<>();
@@ -41,7 +43,8 @@ public class RandomFieldTest {
         props.put("random.use.letters", false);
         xform.configure(props);
 
-        final Schema simpleStructSchema = SchemaBuilder.struct().name("name").version(1).doc("doc").field("magic", Schema.OPTIONAL_INT64_SCHEMA).build();
+        final Schema simpleStructSchema = SchemaBuilder.struct().name("name").version(1).doc("doc")
+            .field("magic", Schema.OPTIONAL_INT64_SCHEMA).build();
         final Struct simpleStruct = new Struct(simpleStructSchema).put("magic", 42L);
         final SourceRecord record = new SourceRecord(null, null, "smt/test", 0, simpleStructSchema, simpleStruct);
         final SourceRecord transformedRecord = xform.apply(record);
