@@ -37,6 +37,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.FixedHostPortGenericContainer;
 import org.testcontainers.containers.GenericContainer;
@@ -234,6 +235,20 @@ public class SmtIntegrationTest {
             .then()
             .log().all()
             .statusCode(HttpStatus.SC_OK);
+    }
+
+    @BeforeEach
+    public void reset() throws InterruptedException {
+        // Remove connector after each test
+        System.out.println("Deleting connector [ " + CONNECTOR_NAME + " ] if exists");
+        given()
+            .log().headers()
+            .contentType(ContentType.JSON)
+            .when()
+            .delete(getKafkaConnectUrl() + "/connectors/" + CONNECTOR_NAME)
+            .andReturn()
+            .then()
+            .log().all();
     }
 
     // Test methods
